@@ -1,15 +1,47 @@
-"""Các provider cùng một interface. Không chứa agent loop."""
+﻿"""Bốn provider cùng một interface. Không chứa agent loop."""
 import json
 import os
 import urllib.error
 import urllib.request
-import uuid
+import secrets
+import time
+from pathlib import Path
+
+
+def _load_local_env():
+    env_file = Path(__file__).resolve().parent / '.env'
+    if env_file.is_file():
+        for raw_line in env_file.read_text(encoding='utf-8-sig').splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            name, value = line.split('=', 1)
+            name, value = name.strip(), value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('\"', "'"):
+                value = value[1:-1]
+            if name and name not in os.environ:
+                os.environ[name] = value
+    if not os.getenv('MODEL') and os.getenv('API_MODEL'):
+        os.environ['MODEL'] = os.environ['API_MODEL']
+
+
+_load_local_env()
+
+_SESSION_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+
+
+def _new_opencode_session_id():
+    timestamp_ms = int(time.time() * 1000)
+    current = timestamp_ms * 0x1000 + 1
+    descending = (~current) & ((1 << 48) - 1)
+    suffix = ''.join(secrets.choice(_SESSION_CHARS) for _ in range(14))
+    return f'ses_{descending:012x}{suffix}'
 
 CONFIG = {
     'openai': ('OPENAI_API_KEY', 'https://api.openai.com/v1/chat/completions'),
     'gemini': ('GEMINI_API_KEY', 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'),
+    'deepseek': ('DEEPSEEK_API_KEY', 'https://api.deepseek.com/chat/completions'),
     'openrouter': ('OPENROUTER_API_KEY', 'https://openrouter.ai/api/v1/chat/completions'),
-    'opencode-go': ('OPENCODE_GO_API_KEY', 'https://opencode.ai/inference/go/openai/v1/chat/completions'),
     'anthropic': ('ANTHROPIC_API_KEY', 'https://api.anthropic.com/v1/messages'),
 }
 
@@ -38,12 +70,20 @@ class Provider:
         if not model:
             raise ValueError('Cần đặt MODEL là model có hỗ trợ tool calling.')
         self.name, self.model = name, model
-        # One Provider instance represents one conversation/run.
-        self.session_id = str(uuid.uuid4()) if name == 'opencode-go' else None
+        self.session_id = _new_opencode_session_id()
         key_name, self.url = CONFIG[name]
-        self.key = os.getenv(key_name)
+        if name == 'openrouter':
+            self.key = os.getenv(key_name) or os.getenv('API_KEY')
+            endpoint = os.getenv('API_ENDPOINT')
+            if endpoint:
+                endpoint = endpoint.strip().rstrip('/')
+                self.url = endpoint if endpoint.endswith('/chat/completions') else f'{endpoint}/chat/completions'
+            key_label = f'{key_name} or API_KEY'
+        else:
+            self.key = os.getenv(key_name)
+            key_label = key_name
         if not self.key:
-            raise ValueError(f'Thiếu {key_name}; xem README.md.')
+            raise ValueError(f'Thiếu {key_label}; xem README.md.')
 
     def complete(self, messages, schemas):
         if self.name == 'anthropic':
@@ -52,8 +92,9 @@ class Provider:
         if schemas:
             payload['tools'] = schemas
         headers = {'Authorization': f'Bearer {self.key}'}
-        if self.name == 'opencode-go':
-            headers.update({'User-Agent': 'StatusAgentLab/1.0', 'x-opencode-session': self.session_id})
+        if self.url.startswith('https://opencode.ai/inference/go/'):
+            headers['x-opencode-session'] = self.session_id
+            headers['User-Agent'] = 'StatusInvestigationAgent/1.0 (educational)'
         data = post_json(self.url, headers, payload)
         choice = data['choices'][0]
         message = choice['message']
@@ -94,3 +135,8 @@ class Provider:
             message['tool_calls'] = [{'id': c['id'], 'type': 'function', 'function': {'name': c['name'], 'arguments': c['arguments']}} for c in calls]
         reason = {'end_turn': 'stop', 'tool_use': 'tool_calls', 'max_tokens': 'length'}.get(data.get('stop_reason'), data.get('stop_reason'))
         return {'message': message, 'calls': calls, 'finish': reason, 'usage': data.get('usage', {})}
+
+
+
+
+

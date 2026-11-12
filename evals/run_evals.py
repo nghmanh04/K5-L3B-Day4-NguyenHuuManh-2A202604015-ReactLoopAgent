@@ -1,4 +1,4 @@
-"""Chạy và chấm eval. expected chỉ cung cấp cho judge, không gửi cho agent."""
+﻿"""Chạy và chấm eval. expected chỉ cung cấp cho judge, không gửi cho agent."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -33,7 +33,7 @@ def run_case(case, args):
 
 def main():
     parser = argparse.ArgumentParser(description='Chạy agent và chấm eval 0–100')
-    choices = ['openai', 'gemini', 'anthropic', 'openrouter', 'opencode-go']
+    choices = ['openai', 'gemini', 'anthropic', 'deepseek', 'openrouter']
     parser.add_argument('--provider', choices=choices, default=os.getenv('PROVIDER', 'openai'))
     parser.add_argument('--model', default=os.getenv('MODEL'))
     parser.add_argument('--judge-provider', choices=choices, default=os.getenv('JUDGE_PROVIDER'))
@@ -80,3 +80,4 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+
